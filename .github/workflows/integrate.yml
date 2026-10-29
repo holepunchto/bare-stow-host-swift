@@ -10,12 +10,12 @@ permissions:
   contents: read
 jobs:
   security:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     name: Security
     steps:
       - uses: holepunchto/actions/security-base@v1
   lint:
-    runs-on: macos-15
+    runs-on: macos-latest
     name: Lint
     steps:
       - uses: holepunchto/actions/swift-base@v1
@@ -24,14 +24,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             platform: linux
-            arch: x64
-          - os: macos-15
+          - os: macos-latest
             platform: darwin
-            arch: arm64
     runs-on: ${{ matrix.os }}
-    name: Test / ${{ matrix.platform }}-${{ matrix.arch }}
+    name: Test / ${{ matrix.platform }}
     steps:
       - uses: holepunchto/actions/swift-base@v1
       - run: swift test
