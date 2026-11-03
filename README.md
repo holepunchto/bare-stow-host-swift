@@ -34,6 +34,10 @@ try await ipc.write(Data("hello".utf8))
 let code = await ipc.terminate()
 ```
 
+Whoever creates the handle must report the exit of the worker with `exited(code:signal:)`, as above. The handle holds back the end of a worker that crashes until its exit is reported, so that it fails with the reason rather than ending cleanly. If the transport fails instead, the handle waits up to the grace period for the exit and fails with it, with the transport failure as its `underlyingError`. If the worker hasn't exited by then, it calls `kill` and fails with the transport failure.
+
+Every `WorkerError` carries a `code`: `WORKER_ERROR` for a fault the worker reported, `WORKER_EXITED` with `exitCode` for a worker that exited, `WORKER_KILLED` with `signal` for a worker killed by a signal, `WORKER_CLOSED` for a transport that closed before ready, `WORKER_TIMEOUT` for a worker that timed out before ready, and `TRANSPORT_ERROR` with `underlyingError` for a transport that failed while reading or writing. A transport that is reset or broken by the worker going away counts as closing rather than failing.
+
 Any `AsyncSequence` of `Data` with an `async` `write(_:)` can be wrapped by conforming it to `Transport`, such as a `Sidecar` from [bare-sidecar-swift](https://github.com/holepunchto/bare-sidecar-swift).
 
 ## Protocol
