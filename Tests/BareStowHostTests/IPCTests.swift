@@ -183,6 +183,28 @@ final class IPCTests: XCTestCase {
     worker.close()
   }
 
+  func testTerminatesTheWorkerWhenReadyIsCancelled() async throws {
+    let (left, right) = pair()
+    let ipc = IPC(left, kill: { left.close() })
+    let worker = Worker(right)
+
+    let waiting = Task { try await ipc.ready() }
+
+    waiting.cancel()
+
+    do {
+      try await waiting.value
+      XCTFail("Expected ready to be cancelled")
+    } catch {
+      XCTAssert(error is CancellationError)
+    }
+
+    _ = await worker.receive("terminate")
+    worker.close()
+
+    await assertReadyFails(ipc, code: "WORKER_CLOSED")
+  }
+
   func testTerminateKillsTheWorkerAfterTheGracePeriod() async throws {
     let (left, right) = pair()
     let ipc = IPC(left, kill: { left.close() }, grace: 0.01)
