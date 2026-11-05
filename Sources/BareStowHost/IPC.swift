@@ -77,7 +77,8 @@ public final class IPC: AsyncSequence, @unchecked Sendable {
 
   private let lock = NSLock()
   private var ready: Result<Void, WorkerError>?
-  private var readyWaiters: [CheckedContinuation<Void, Error>] = []
+  private var readyWaiters: [Int: CheckedContinuation<Void, Error>] = [:]
+  private var nextReadyWaiter = 0
   private var transportEnded = false
   private var closed = false
   private var closeWaiters: [CheckedContinuation<Void, Never>] = []
@@ -165,15 +166,30 @@ public final class IPC: AsyncSequence, @unchecked Sendable {
   /// Waits for the worker to signal ready.
   ///
   /// - Throws: A ``WorkerError`` if the worker errors, exits, closes, or times
-  ///   out before then, in which case the worker is terminated.
+  ///   out before then, in which case the worker is terminated. The worker is
+  ///   also terminated if the task is cancelled before then, throwing a
+  ///   `CancellationError`.
   public func ready() async throws {
-    try await withCheckedThrowingContinuation { continuation in
-      let ready: Result<Void, WorkerError>? = locked {
-        if self.ready == nil { readyWaiters.append(continuation) }
-        return self.ready
-      }
+    let id = locked {
+      nextReadyWaiter += 1
+      return nextReadyWaiter
+    }
 
-      if let ready { continuation.resume(with: ready) }
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let ready: Result<Void, WorkerError>? = locked {
+          if self.ready == nil { readyWaiters[id] = continuation }
+          return self.ready
+        }
+
+        if let ready {
+          continuation.resume(with: ready)
+        } else if Task.isCancelled {
+          cancelReady(id)
+        }
+      }
+    } onCancel: {
+      cancelReady(id)
     }
   }
 
@@ -456,8 +472,8 @@ public final class IPC: AsyncSequence, @unchecked Sendable {
     let settled: ([CheckedContinuation<Void, Error>], Task<Void, Never>?)? = locked {
       if ready != nil || skipped() { return nil }
       ready = result
-      defer { readyWaiters = [] }
-      return (readyWaiters, timer)
+      defer { readyWaiters = [:] }
+      return (Array(readyWaiters.values), timer)
     }
 
     guard let (waiters, timer) = settled else { return }
@@ -469,6 +485,16 @@ public final class IPC: AsyncSequence, @unchecked Sendable {
     if case .failure = result {
       Task { await close() }
     }
+  }
+
+  // A waiter is cancelled either by its cancellation handler or, if that ran
+  // before the waiter was added, by the waiter itself.
+  private func cancelReady(_ id: Int) {
+    guard let waiter = locked({ readyWaiters.removeValue(forKey: id) }) else { return }
+
+    waiter.resume(throwing: CancellationError())
+
+    Task { await close() }
   }
 
   private func waitClosed() async {
